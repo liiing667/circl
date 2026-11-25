@@ -97,6 +97,40 @@ type state struct {
 	info   []byte
 }
 
+// acceptsKeyScheme reports whether scheme belongs to the KEM identifier.
+// Generic KEM adapters can report either the HPKE scheme name or the name of
+// the algorithmically identical underlying KEM.
+func (k KEM) acceptsKeyScheme(scheme kem.Scheme) bool {
+	if scheme == nil || !k.IsValid() {
+		return false
+	}
+
+	want := k.Scheme()
+	if scheme.Name() == want.Name() {
+		return true
+	}
+
+	if generic, ok := want.(genericNoAuthKEM); ok {
+		return scheme.Name() == generic.Scheme.Name()
+	}
+
+	return false
+}
+
+func (suite Suite) checkPublicKey(pk kem.PublicKey) error {
+	if pk == nil || !suite.kemID.acceptsKeyScheme(pk.Scheme()) {
+		return ErrInvalidKEMPublicKey
+	}
+	return nil
+}
+
+func (suite Suite) checkPrivateKey(sk kem.PrivateKey) error {
+	if sk == nil || !suite.kemID.acceptsKeyScheme(sk.Scheme()) {
+		return ErrInvalidKEMPrivateKey
+	}
+	return nil
+}
+
 // Sender performs hybrid public-key encryption.
 type Sender struct {
 	state
@@ -105,6 +139,9 @@ type Sender struct {
 
 // NewSender creates a Sender with knowledge of the receiver's public-key.
 func (suite Suite) NewSender(pkR kem.PublicKey, info []byte) (*Sender, error) {
+	if err := suite.checkPublicKey(pkR); err != nil {
+		return nil, err
+	}
 	return &Sender{
 		state: state{Suite: suite, info: info},
 		pkR:   pkR,
@@ -123,6 +160,9 @@ func (s *Sender) Setup(rnd io.Reader) (enc []byte, seal Sealer, err error) {
 func (s *Sender) SetupAuth(rnd io.Reader, skS kem.PrivateKey) (
 	enc []byte, seal Sealer, err error,
 ) {
+	if err := s.checkPrivateKey(skS); err != nil {
+		return nil, nil, err
+	}
 	s.modeID = modeAuth
 	s.state.skS = skS
 	return s.allSetup(rnd)
@@ -144,6 +184,9 @@ func (s *Sender) SetupPSK(rnd io.Reader, psk, pskID []byte) (
 func (s *Sender) SetupAuthPSK(rnd io.Reader, skS kem.PrivateKey, psk, pskID []byte) (
 	enc []byte, seal Sealer, err error,
 ) {
+	if err := s.checkPrivateKey(skS); err != nil {
+		return nil, nil, err
+	}
 	s.modeID = modeAuthPSK
 	s.state.skS = skS
 	s.state.psk = psk
@@ -162,6 +205,9 @@ type Receiver struct {
 func (suite Suite) NewReceiver(skR kem.PrivateKey, info []byte) (
 	*Receiver, error,
 ) {
+	if err := suite.checkPrivateKey(skR); err != nil {
+		return nil, err
+	}
 	return &Receiver{state: state{Suite: suite, info: info}, skR: skR}, nil
 }
 
@@ -176,6 +222,9 @@ func (r *Receiver) Setup(enc []byte) (Opener, error) {
 // SetupAuth generates a new HPKE context used for Auth Mode encryption.
 // SetupAuth takes an encapsulated key and a public key, and returns an Opener.
 func (r *Receiver) SetupAuth(enc []byte, pkS kem.PublicKey) (Opener, error) {
+	if err := r.checkPublicKey(pkS); err != nil {
+		return nil, err
+	}
 	r.modeID = modeAuth
 	r.enc = enc
 	r.state.pkS = pkS
@@ -199,6 +248,9 @@ func (r *Receiver) SetupPSK(enc, psk, pskID []byte) (Opener, error) {
 func (r *Receiver) SetupAuthPSK(
 	enc, psk, pskID []byte, pkS kem.PublicKey,
 ) (Opener, error) {
+	if err := r.checkPublicKey(pkS); err != nil {
+		return nil, err
+	}
 	r.modeID = modeAuthPSK
 	r.enc = enc
 	r.state.psk = psk
@@ -208,6 +260,15 @@ func (r *Receiver) SetupAuthPSK(
 }
 
 func (s *Sender) allSetup(rnd io.Reader) ([]byte, Sealer, error) {
+	if err := s.checkPublicKey(s.pkR); err != nil {
+		return nil, nil, err
+	}
+	if s.modeID == modeAuth || s.modeID == modeAuthPSK {
+		if err := s.checkPrivateKey(s.skS); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	scheme := s.kemID.Scheme()
 
 	if rnd == nil {
@@ -244,6 +305,15 @@ func (s *Sender) allSetup(rnd io.Reader) ([]byte, Sealer, error) {
 }
 
 func (r *Receiver) allSetup() (Opener, error) {
+	if err := r.checkPrivateKey(r.skR); err != nil {
+		return nil, err
+	}
+	if r.modeID == modeAuth || r.modeID == modeAuthPSK {
+		if err := r.checkPublicKey(r.pkS); err != nil {
+			return nil, err
+		}
+	}
+
 	var err error
 	var ss []byte
 	scheme := r.kemID.Scheme()

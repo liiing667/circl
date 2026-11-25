@@ -38,12 +38,12 @@ func (s shortKEM) byteSize() int {
 func (s shortKEM) sizeDH() int { return s.byteSize() }
 func (s shortKEM) calcDH(dh []byte, sk kem.PrivateKey, pk kem.PublicKey) error {
 	PK, ok := pk.(*shortKEMPubKey)
-	if !ok {
+	if !ok || PK.scheme.id != s.id {
 		return ErrInvalidKEMPublicKey
 	}
 
 	SK, ok := sk.(*shortKEMPrivKey)
-	if !ok {
+	if !ok || SK.scheme.id != s.id {
 		return ErrInvalidKEMPrivateKey
 	}
 

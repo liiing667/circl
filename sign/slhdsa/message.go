@@ -27,29 +27,43 @@ type PreHash struct {
 // SHA3 hash functions.
 // Returns [ErrPreHash] if the function is not supported.
 func NewPreHashWithHash(h crypto.Hash) (*PreHash, error) {
-	hash2oid := [...]byte{
-		crypto.SHA256:     1,
-		crypto.SHA384:     2,
-		crypto.SHA512:     3,
-		crypto.SHA224:     4,
-		crypto.SHA512_224: 5,
-		crypto.SHA512_256: 6,
-		crypto.SHA3_224:   7,
-		crypto.SHA3_256:   8,
-		crypto.SHA3_384:   9,
-		crypto.SHA3_512:   10,
-	}
-
-	if int(h) >= len(hash2oid) {
-		return nil, ErrPreHash
-	}
-
-	oid := hash2oid[h]
-	if oid == 0 {
+	oid, ok := preHashOID(h)
+	if !ok || !h.Available() {
 		return nil, ErrPreHash
 	}
 
 	return &PreHash{h.New(), h.Size(), oid}, nil
+}
+
+func preHashOID(h crypto.Hash) (byte, bool) {
+	// See the NIST Computer Security Objects Register for the suffixes of
+	// the pre-hash algorithm OIDs used by FIPS 205. An explicit switch keeps
+	// unknown and out-of-range identifiers from aliasing another entry in a
+	// sparse lookup table.
+	switch h {
+	case crypto.SHA256:
+		return 1, true
+	case crypto.SHA384:
+		return 2, true
+	case crypto.SHA512:
+		return 3, true
+	case crypto.SHA224:
+		return 4, true
+	case crypto.SHA512_224:
+		return 5, true
+	case crypto.SHA512_256:
+		return 6, true
+	case crypto.SHA3_224:
+		return 7, true
+	case crypto.SHA3_256:
+		return 8, true
+	case crypto.SHA3_384:
+		return 9, true
+	case crypto.SHA3_512:
+		return 10, true
+	default:
+		return 0, false
+	}
 }
 
 // [NewPreHashWithXof] is used to prehash messages using either SHAKE-128
@@ -71,6 +85,10 @@ func (ph *PreHash) Write(b []byte) (int, error) { return ph.writer.Write(b) }
 
 // BuildMessage returns a [Message] for signing, and resets the writer.
 func (ph *PreHash) BuildMessage() (*Message, error) {
+	if ph == nil || ph.oid < 1 || ph.oid > 12 {
+		return nil, ErrPreHash
+	}
+
 	// Source https://csrc.nist.gov/Projects/computer-security-objects-register/algorithm-registration
 	const oidLen = 11
 	oid := [oidLen]byte{
