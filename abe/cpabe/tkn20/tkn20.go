@@ -43,6 +43,9 @@ func (p *PublicKey) Equal(p2 *PublicKey) bool {
 	return p.pp.Equal(&p2.pp)
 }
 
+// Encrypt encrypts msg for the attributes satisfying policy. It returns an
+// error if the serialized policy or ciphertext fields exceed the encoding's
+// length limits, rather than emitting a truncated, undecryptable ciphertext.
 func (p *PublicKey) Encrypt(rand io.Reader, policy Policy, msg []byte) ([]byte, error) {
 	if rand == nil {
 		rand = cryptoRand.Reader
@@ -93,6 +96,10 @@ func (s *AttributeKey) Equal(s2 *AttributeKey) bool {
 	return s.ak.Equal(&s2.ak)
 }
 
+// Decrypt recovers the plaintext from a ciphertext allowed by the key's attributes.
+// On any decryption or authentication failure it returns a nil plaintext and
+// a non-nil error; callers must not publish a previous batch result for the
+// failed item.
 func (s *AttributeKey) Decrypt(ct []byte) ([]byte, error) {
 	return tkn.DecryptCCA(ct, &s.ak)
 }
