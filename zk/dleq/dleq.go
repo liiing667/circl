@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 
 	"github.com/cloudflare/circl/group"
 )
@@ -42,8 +43,9 @@ type Proof struct {
 
 type Prover struct{ Params }
 
-// ErrInvalidBatch indicates that a DLEQ batch is empty or its input vectors
-// have different lengths.
+// ErrInvalidBatch indicates that a DLEQ batch is empty, its input vectors
+// have different lengths, or it holds more elements than the RFC 9497
+// composite encoding can address.
 var ErrInvalidBatch = errors.New("dleq: invalid batch shape")
 
 func (p Prover) Prove(k group.Scalar, a, ka, b, kb group.Element, rnd io.Reader) (*Proof, error) {
@@ -154,6 +156,14 @@ func (p Params) computeComposites(
 	kbi []group.Element,
 ) (m, z group.Element, err error) {
 	if len(bi) == 0 || len(bi) != len(kbi) {
+		return nil, nil, ErrInvalidBatch
+	}
+	// RFC 9497, section 3.3.2 encodes the per-element index j with
+	// I2OSP(j, 2) inside the HashToScalar input. I2OSP rejects values of
+	// 2^16 or more, and silently truncating j to 16 bits would wrap the
+	// index and hand the same composite coefficient to distinct elements,
+	// breaking the binding between the proof and each batch element.
+	if len(bi) > math.MaxUint16 {
 		return nil, nil, ErrInvalidBatch
 	}
 

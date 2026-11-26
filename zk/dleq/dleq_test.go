@@ -6,12 +6,63 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/cloudflare/circl/group"
 	"github.com/cloudflare/circl/internal/test"
 	"github.com/cloudflare/circl/zk/dleq"
 )
+
+func TestRejectsOversizedBatch(t *testing.T) {
+	// RFC 9497, section 3.3.2 frames the per-element index as I2OSP(j, 2),
+	// so a batch of 2^16 elements or more must be rejected instead of
+	// wrapping the index and reusing composite coefficients.
+	g := group.P256
+	params := dleq.Params{G: g, H: crypto.SHA256, DST: []byte("domain_sep_string")}
+	prover := dleq.Prover{Params: params}
+	verifier := dleq.Verifier{Params: params}
+
+	k := g.RandomScalar(rand.Reader)
+	a := g.RandomElement(rand.Reader)
+	ka := g.NewElement().Mul(a, k)
+
+	oversized := make([]group.Element, math.MaxUint16+1)
+	oversizedKB := make([]group.Element, math.MaxUint16+1)
+	for i := range oversized {
+		oversized[i] = g.Identity()
+		oversizedKB[i] = g.Identity()
+	}
+
+	if _, err := prover.ProveBatch(
+		k, a, ka, oversized, oversizedKB, rand.Reader,
+	); !errors.Is(err, dleq.ErrInvalidBatch) {
+		t.Fatalf("got proving error %v, want %v", err, dleq.ErrInvalidBatch)
+	}
+
+	// A well-formed proof over a small batch must not make the verifier
+	// accept an oversized, index-wrapped batch.
+	bi := []group.Element{g.RandomElement(rand.Reader), g.RandomElement(rand.Reader)}
+	kbi := []group.Element{
+		g.NewElement().Mul(bi[0], k),
+		g.NewElement().Mul(bi[1], k),
+	}
+	proof, err := prover.ProveBatch(k, a, ka, bi, kbi, rand.Reader)
+	test.CheckNoErr(t, err, "wrong proof generation")
+
+	if verifier.VerifyBatch(a, ka, oversized, oversizedKB, proof) {
+		t.Fatal("VerifyBatch accepted an oversized batch")
+	}
+	if verifier.VerifyBatchRFC9497(ka, oversized, oversizedKB, proof) {
+		t.Fatal("VerifyBatchRFC9497 accepted an oversized batch")
+	}
+
+	// The bound is exclusive: ordinary batches stay valid (TestDLEQ covers
+	// the round trip, and the small-batch proof above verifies).
+	if !verifier.VerifyBatch(a, ka, bi, kbi, proof) {
+		t.Fatal("a well-formed small batch must still verify")
+	}
+}
 
 func TestDLEQ(t *testing.T) {
 	for _, g := range []group.Group{
