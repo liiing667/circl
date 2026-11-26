@@ -55,6 +55,17 @@ func SchemeByOid(oid asn1.ObjectIdentifier) sign.Scheme { return allSchemesByOID
 
 func SchemeByTLSID(id uint) sign.Scheme { return allSchemesByTLS[id] }
 
+// checkAlgorithmParameters rejects AlgorithmIdentifier parameters. None of the
+// supported schemes take parameters, and the relevant specifications require
+// them to be absent (for example, RFC 8410 for Ed25519 and Ed448). Accepting
+// them would let the same key bytes be interpreted as different algorithms.
+func checkAlgorithmParameters(alg pkix.AlgorithmIdentifier) error {
+	if len(alg.Parameters.FullBytes) != 0 {
+		return errors.New("algorithm parameters must be absent")
+	}
+	return nil
+}
+
 // Additional methods when the signature scheme is supported in X509.
 type CertificateScheme interface {
 	// Return the appropriate OIDs for this instance.  It is implicitly
@@ -94,6 +105,9 @@ func UnmarshalPKIXPublicKey(data []byte) (sign.PublicKey, error) {
 	} else if len(rest) != 0 {
 		return nil, errors.New("trailing data")
 	}
+	if err := checkAlgorithmParameters(pkix.Algorithm); err != nil {
+		return nil, err
+	}
 	scheme := SchemeByOid(pkix.Algorithm.Algorithm)
 	if scheme == nil {
 		return nil, errors.New("unsupported public key algorithm")
@@ -127,6 +141,9 @@ func UnmarshalPKIXPrivateKey(data []byte) (sign.PrivateKey, error) {
 		return nil, err
 	} else if len(rest) != 0 {
 		return nil, errors.New("trailing data")
+	}
+	if err := checkAlgorithmParameters(pkix.Algorithm); err != nil {
+		return nil, err
 	}
 	scheme := SchemeByOid(pkix.Algorithm.Algorithm)
 	if scheme == nil {

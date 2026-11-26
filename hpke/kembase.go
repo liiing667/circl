@@ -13,6 +13,7 @@ import (
 type dhKEM interface {
 	sizeDH() int
 	calcDH(dh []byte, sk kem.PrivateKey, pk kem.PublicKey) error
+	CiphertextSize() int
 	SeedSize() int
 	DeriveKeyPair(seed []byte) (kem.PublicKey, kem.PrivateKey)
 	UnmarshalBinaryPrivateKey(data []byte) (kem.PrivateKey, error)
@@ -108,12 +109,18 @@ func (k dhKemBase) Encapsulate(pkr kem.PublicKey) (
 func (k dhKemBase) AuthEncapsulateDeterministically(
 	pkr kem.PublicKey, sks kem.PrivateKey, seed []byte,
 ) (ct, ss []byte, err error) {
+	if len(seed) != k.SeedSize() {
+		return nil, nil, kem.ErrSeedSize
+	}
 	return k.authEncap(pkr, sks, seed)
 }
 
 func (k dhKemBase) EncapsulateDeterministically(
 	pkr kem.PublicKey, seed []byte,
 ) (ct, ss []byte, err error) {
+	if len(seed) != k.SeedSize() {
+		return nil, nil, kem.ErrSeedSize
+	}
 	return k.encap(pkr, seed)
 }
 
@@ -183,6 +190,9 @@ func (k dhKemBase) coreEncap(
 }
 
 func (k dhKemBase) Decapsulate(skr kem.PrivateKey, ct []byte) ([]byte, error) {
+	if len(ct) != k.CiphertextSize() {
+		return nil, kem.ErrCiphertextSize
+	}
 	dh := make([]byte, k.sizeDH())
 	kemCtx, err := k.coreDecap(dh, skr, ct)
 	if err != nil {
@@ -196,6 +206,9 @@ func (k dhKemBase) AuthDecapsulate(
 	ct []byte,
 	pkS kem.PublicKey,
 ) ([]byte, error) {
+	if len(ct) != k.CiphertextSize() {
+		return nil, kem.ErrCiphertextSize
+	}
 	dhLen := k.sizeDH()
 	dh := make([]byte, 2*dhLen)
 	kemCtx, err := k.coreDecap(dh[:dhLen], skR, ct)

@@ -33,23 +33,27 @@ func (h hybridKEM) AuthDecapsulate(skR kem.PrivateKey,
 	ct []byte,
 	pkS kem.PublicKey,
 ) ([]byte, error) {
-	panic("AuthDecapsulate is not supported for this KEM")
+	return nil, ErrInvalidAuthKEM
 }
 
 func (h hybridKEM) AuthEncapsulate(pkr kem.PublicKey, sks kem.PrivateKey) (
 	ct []byte, ss []byte, err error,
 ) {
-	panic("AuthEncapsulate is not supported for this KEM")
+	return nil, nil, ErrInvalidAuthKEM
 }
 
 func (h hybridKEM) AuthEncapsulateDeterministically(pkr kem.PublicKey, sks kem.PrivateKey, seed []byte) (ct, ss []byte, err error) {
-	panic("AuthEncapsulateDeterministically is not supported for this KEM")
+	return nil, nil, ErrInvalidAuthKEM
 }
 
 func (h hybridKEM) Encapsulate(pkr kem.PublicKey) (
 	ct []byte, ss []byte, err error,
 ) {
-	panic("Encapsulate is not implemented")
+	seed := make([]byte, h.EncapsulationSeedSize())
+	if _, err = rand.Read(seed); err != nil {
+		return nil, nil, err
+	}
+	return h.EncapsulateDeterministically(pkr, seed)
 }
 
 func (h hybridKEM) Decapsulate(skr kem.PrivateKey, ct []byte) ([]byte, error) {
@@ -57,7 +61,7 @@ func (h hybridKEM) Decapsulate(skr kem.PrivateKey, ct []byte) ([]byte, error) {
 		return nil, kem.ErrCiphertextSize
 	}
 	hybridSk, ok := skr.(*hybridKEMPrivKey)
-	if !ok {
+	if !ok || hybridSk.scheme == nil || hybridSk.scheme.Name() != h.Name() {
 		return nil, kem.ErrTypeMismatch
 	}
 	ssA, err := h.kemA.Decapsulate(hybridSk.privA, ct[0:h.kemA.CiphertextSize()])
@@ -81,7 +85,7 @@ func (h hybridKEM) EncapsulateDeterministically(
 		return nil, nil, kem.ErrSeedSize
 	}
 	hybridPk, ok := pkr.(*hybridKEMPubKey)
-	if !ok {
+	if !ok || hybridPk.scheme == nil || hybridPk.scheme.Name() != h.Name() {
 		return nil, nil, kem.ErrTypeMismatch
 	}
 	encA, ssA, err := h.kemA.EncapsulateDeterministically(hybridPk.pubA, seed[0:h.kemA.EncapsulationSeedSize()])
