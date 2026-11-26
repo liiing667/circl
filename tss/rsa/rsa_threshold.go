@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 
 	cmath "github.com/cloudflare/circl/math"
@@ -81,6 +82,9 @@ func GenerateKey(random io.Reader, bits int) (*rsa.PrivateKey, error) {
 // k=t+1 or `Threshold`, the number of signature shares needed to obtain a signature.
 
 func validateParams(players, threshold uint) error {
+	if uint64(players) > math.MaxInt64 {
+		return errors.New("rsa_threshold: Players (l) invalid: too large")
+	}
 	if players <= 1 {
 		return errors.New("rsa_threshold: Players (l) invalid: should be > 1")
 	}
@@ -205,26 +209,68 @@ type Signature = []byte
 // and threshold must be trusted protocol parameters; the function checks them
 // against every share before combining.
 func CombineSignShares(pub *rsa.PublicKey, players, threshold uint, shares []SignShare, msg []byte) (Signature, error) {
-	if err := validateParams(players, threshold); err != nil {
+	if err := validateShareSet(players, threshold, shares); err != nil {
 		return nil, err
 	}
-	if len(shares) == 0 {
-		return nil, errors.New("rsa_threshold: no shares provided")
+	if pub == nil || pub.N == nil {
+		return nil, errors.New("rsa_threshold: invalid RSA public key")
+	}
+	if len(msg) == 0 {
+		return nil, errors.New("rsa_threshold: empty signing input")
 	}
 
+	return combineValidatedSignShares(pub, players, shares, msg)
+}
+
+func validateShareSet(players, threshold uint, shares []SignShare) error {
+	if err := validateParams(players, threshold); err != nil {
+		return err
+	}
+	if len(shares) == 0 {
+		return errors.New("rsa_threshold: no shares provided")
+	}
+
+	seen := make(map[uint]struct{}, len(shares))
 	for i := range shares {
-		if shares[i].Players != players {
-			return nil, errors.New("rsa_threshold: share players did not match protocol players")
+		share := shares[i]
+		if err := validateShare(players, threshold, &share); err != nil {
+			return err
 		}
-		if shares[i].Threshold != threshold {
-			return nil, errors.New("rsa_threshold: share threshold did not match protocol threshold")
+		if _, ok := seen[share.Index]; ok {
+			return errors.New("rsa_threshold: duplicate share index")
 		}
+		seen[share.Index] = struct{}{}
 	}
 
 	if uint(len(shares)) < threshold {
-		return nil, errors.New("rsa_threshold: insufficient shares for the threshold")
+		return errors.New("rsa_threshold: insufficient shares for the threshold")
 	}
+	return nil
+}
 
+func validateShare(players, threshold uint, share *SignShare) error {
+	if err := validateParams(players, threshold); err != nil {
+		return err
+	}
+	if share.Players != players {
+		return errors.New("rsa_threshold: share players did not match protocol players")
+	}
+	if share.Threshold != threshold {
+		return errors.New("rsa_threshold: share threshold did not match protocol threshold")
+	}
+	if share.Index == 0 || share.Index > players {
+		return errors.New("rsa_threshold: share index out of range")
+	}
+	if share.xi == nil {
+		return errors.New("rsa_threshold: missing share value")
+	}
+	if share.xi.Sign() < 0 {
+		return errors.New("rsa_threshold: negative share value")
+	}
+	return nil
+}
+
+func combineValidatedSignShares(pub *rsa.PublicKey, players uint, shares []SignShare, msg []byte) (Signature, error) {
 	w := big.NewInt(1)
 	delta := calculateDelta(int64(players))
 	// i_1 ... i_k

@@ -88,6 +88,9 @@ func (s *SignShare) UnmarshalBinary(data []byte) error {
 	if len(data[8:]) < xiLen {
 		return fmt.Errorf("rsa_threshold: signshare unmarshalKeyShareTest failed: data length was too short for reading xi, needed: %d found: %d", xiLen, len(data[8:]))
 	}
+	if len(data) != 8+xiLen {
+		return fmt.Errorf("rsa_threshold: signshare unmarshal failed: trailing data after share")
+	}
 
 	xi := big.Int{}
 	bytes := make([]byte, xiLen)
