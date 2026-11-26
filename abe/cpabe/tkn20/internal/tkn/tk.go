@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 
 	pairing "github.com/cloudflare/circl/ecc/bls12381"
 )
@@ -22,19 +23,28 @@ func (p *PublicParams) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("PublicParams serializing failed: %w", err)
 	}
-	ret := appendLenPrefixed(nil, b2Bytes)
+	ret, err := appendLenPrefixed(nil, b2Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("PublicParams serializing failed: %w", err)
+	}
 
 	wb1Bytes, err := p.wb1.marshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("PublicParams serializing failed: %w", err)
 	}
-	ret = appendLenPrefixed(ret, wb1Bytes)
+	ret, err = appendLenPrefixed(ret, wb1Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("PublicParams serializing failed: %w", err)
+	}
 
 	btkBytes, err := p.btk.marshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("PublicParams serializing failed: %w", err)
 	}
-	ret = appendLenPrefixed(ret, btkBytes)
+	ret, err = appendLenPrefixed(ret, btkBytes)
+	if err != nil {
+		return nil, fmt.Errorf("PublicParams serializing failed: %w", err)
+	}
 
 	return ret, nil
 }
@@ -114,9 +124,15 @@ func (s *SecretParams) MarshalBinary() ([]byte, error) {
 		aBytes, wtABytes, bstarBytes, bstar12Bytes, kBytes, s.prfKey,
 	}
 
-	ret := appendLenPrefixed(nil, bufs[0])
+	ret, err := appendLenPrefixed(nil, bufs[0])
+	if err != nil {
+		return nil, fmt.Errorf("SecretParams serializing failed: %w", err)
+	}
 	for _, buf := range bufs[1:] {
-		ret = appendLenPrefixed(ret, buf)
+		ret, err = appendLenPrefixed(ret, buf)
+		if err != nil {
+			return nil, fmt.Errorf("SecretParams serializing failed: %w", err)
+		}
 	}
 	return ret, nil
 }
@@ -198,17 +214,29 @@ func (a *AttributesKey) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("AttributesKey serializing failed: %w", err)
 	}
-	ret := appendLenPrefixed(nil, aBytes)
+	ret, err := appendLenPrefixed(nil, aBytes)
+	if err != nil {
+		return nil, fmt.Errorf("AttributesKey serializing failed: %w", err)
+	}
 	k1Bytes, err := a.k1.marshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("AttributesKey serializing failed: %w", err)
 	}
-	ret = appendLenPrefixed(ret, k1Bytes)
+	ret, err = appendLenPrefixed(ret, k1Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("AttributesKey serializing failed: %w", err)
+	}
 	k2Bytes, err := a.k2.marshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("AttributesKey serializing failed: %w", err)
 	}
-	ret = appendLenPrefixed(ret, k2Bytes)
+	ret, err = appendLenPrefixed(ret, k2Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("AttributesKey serializing failed: %w", err)
+	}
+	if len(a.k3) > math.MaxUint16 {
+		return nil, fmt.Errorf("AttributesKey serializing failed: too large (overflow)")
+	}
 	ret = append(ret, 0, 0)
 	binary.LittleEndian.PutUint16(ret[len(ret)-2:], uint16(len(a.k3)))
 	k3Bytes, err := marshalBinarySortedMapMatrixG1(a.k3)
@@ -217,6 +245,9 @@ func (a *AttributesKey) MarshalBinary() ([]byte, error) {
 	}
 	ret = append(ret, k3Bytes...)
 
+	if len(a.k3wild) > math.MaxUint16 {
+		return nil, fmt.Errorf("AttributesKey serializing failed: too large (overflow)")
+	}
 	ret = append(ret, 0, 0)
 	binary.LittleEndian.PutUint16(ret[len(ret)-2:], uint16(len(a.k3wild)))
 	k3wildBytes, err := marshalBinarySortedMapMatrixG1(a.k3wild)
@@ -343,19 +374,28 @@ func (hdr *ciphertextHeader) marshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	ret := appendLenPrefixed(nil, pBytes)
+	ret, err := appendLenPrefixed(nil, pBytes)
+	if err != nil {
+		return nil, err
+	}
 
 	c1Bytes, err := hdr.c1.marshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("c1 serializing: %w", err)
 	}
-	ret = appendLenPrefixed(ret, c1Bytes)
+	ret, err = appendLenPrefixed(ret, c1Bytes)
+	if err != nil {
+		return nil, err
+	}
 
 	// Now we need to indicate how long c2, c3, c3neg are.
 	// Each array will be the same size (or nil), so with more work we can specialize
 	// but for now we will ignore that.
 
 	c2Len := len(hdr.c2)
+	if c2Len > math.MaxUint16 {
+		return nil, fmt.Errorf("c2 too long (overflow)")
+	}
 
 	ret = append(ret, 0, 0)
 	binary.LittleEndian.PutUint16(ret[len(ret)-2:], uint16(c2Len))
@@ -364,9 +404,15 @@ func (hdr *ciphertextHeader) marshalBinary() ([]byte, error) {
 		if errM != nil {
 			return nil, fmt.Errorf("c2 serializing %d: %w", i, errM)
 		}
-		ret = appendLenPrefixed(ret, c2dat)
+		ret, err = appendLenPrefixed(ret, c2dat)
+		if err != nil {
+			return nil, fmt.Errorf("c2 serializing %d: %w", i, err)
+		}
 	}
 	c3Len := len(hdr.c3)
+	if c3Len > math.MaxUint16 {
+		return nil, fmt.Errorf("c3 too long (overflow)")
+	}
 	ret = append(ret, 0, 0)
 	binary.LittleEndian.PutUint16(ret[len(ret)-2:], uint16(c3Len))
 	for i := 0; i < c3Len; i++ {
@@ -374,7 +420,10 @@ func (hdr *ciphertextHeader) marshalBinary() ([]byte, error) {
 		if errM != nil {
 			return nil, fmt.Errorf("c3 serializing %d: %w", i, errM)
 		}
-		ret = appendLenPrefixed(ret, c3dat)
+		ret, err = appendLenPrefixed(ret, c3dat)
+		if err != nil {
+			return nil, fmt.Errorf("c3 serializing %d: %w", i, err)
+		}
 	}
 	for i := 0; i < c3Len; i++ {
 		var c3negdat []byte
@@ -386,7 +435,10 @@ func (hdr *ciphertextHeader) marshalBinary() ([]byte, error) {
 		} else {
 			c3negdat = nil
 		}
-		ret = appendLenPrefixed(ret, c3negdat)
+		ret, err = appendLenPrefixed(ret, c3negdat)
+		if err != nil {
+			return nil, fmt.Errorf("c3neg serializing %d: %w", i, err)
+		}
 	}
 	return ret, nil
 }
@@ -750,8 +802,13 @@ func decapsulate(header *ciphertextHeader, key *AttributesKey) (*pairing.Gt, err
 		mt := sat.matches[k]
 		j := pi[mt.wire]
 
+		if header.c3[mt.wire] == nil || header.c3[mt.wire].cols != 1 {
+			return nil, fmt.Errorf("invalid ciphertext: bad c3[%d] dimensions", mt.wire)
+		}
 		if p1[j] == nil {
 			p1[j] = newMatrixG1(header.c3[mt.wire].rows, header.c3[mt.wire].cols)
+		} else if !p1[j].conformal(header.c3[mt.wire]) {
+			return nil, fmt.Errorf("invalid ciphertext: bad c3[%d] dimensions", mt.wire)
 		}
 		if p2[j] == nil {
 			p2[j] = newMatrixG1(key.k3[mt.label].rows, key.k3[mt.label].cols)
@@ -778,6 +835,9 @@ func decapsulate(header *ciphertextHeader, key *AttributesKey) (*pairing.Gt, err
 			// below (this runs before the MAC check in DecryptCCA).
 			if header.c3neg[mt.wire] == nil {
 				return nil, fmt.Errorf("invalid ciphertext: missing c3neg data for negative wire %d", mt.wire)
+			}
+			if !header.c3neg[mt.wire].conformal(header.c3[mt.wire]) {
+				return nil, fmt.Errorf("invalid ciphertext: bad c3neg[%d] dimensions", mt.wire)
 			}
 			keymat := newMatrixG1(0, 0)
 			y := &pairing.Scalar{}
@@ -814,6 +874,11 @@ func decapsulate(header *ciphertextHeader, key *AttributesKey) (*pairing.Gt, err
 		if p1[i] != nil {
 			if pTot == nil {
 				pTot = newMatrixG1(p1[i].rows, p1[i].cols)
+			} else if !pTot.conformal(p1[i]) {
+				return nil, fmt.Errorf("invalid ciphertext: non-conformal c3 matrices")
+			}
+			if header.c2[i] == nil || header.c2[i].cols != 1 || header.c2[i].rows < p2[i].rows {
+				return nil, fmt.Errorf("invalid ciphertext: bad c2[%d] dimensions", i)
 			}
 			pTot.add(pTot, p1[i])
 			pairs.addDuals(p2[i], header.c2[i], 1)
@@ -825,6 +890,12 @@ func decapsulate(header *ciphertextHeader, key *AttributesKey) (*pairing.Gt, err
 	// so reaching it with a nil pTot would panic instead of failing cleanly.
 	if pTot == nil {
 		return nil, fmt.Errorf("invalid ciphertext: no satisfying policy wires")
+	}
+	if pTot.rows > key.k1.rows {
+		return nil, fmt.Errorf("invalid ciphertext: c3 matrices too tall")
+	}
+	if header.c1 == nil || header.c1.cols != 1 || header.c1.rows < key.k2.rows {
+		return nil, fmt.Errorf("invalid ciphertext: bad c1 dimensions")
 	}
 	pairs.addDuals(pTot, key.k1, -1)
 	pairs.addDuals(key.k2.copy(), header.c1, 1)
